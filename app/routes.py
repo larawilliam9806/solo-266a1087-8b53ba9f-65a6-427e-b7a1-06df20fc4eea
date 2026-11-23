@@ -16,15 +16,30 @@ from flask import (
     url_for,
 )
 
-from .constants import HEIGHT_METRICS, OUTPUT_COLUMNS, PREVIEW_ROWS
-from .db import close_db, init_db, standalone_connection
+from .constants import (
+    HEIGHT_METRICS,
+    OUTPUT_COLUMNS,
+    PREVIEW_ROWS,
+    RECHECK_COLUMNS,
+    SWAP_HEADERS,
+)
+from .db import close_db, get_db, init_db, recheck_connection, standalone_connection
 from .parquet_tools import csv_chunks, iter_output_rows, preview_rows
+from .recheck import (
+    RecheckFormError,
+    iter_recheck_rows,
+    new_swap_token,
+    preview_recheck_rows,
+    run_recheck,
+)
 from .services import (
     ValidationError,
     get_batch,
+    get_published_version,
     get_stage,
     get_version,
     list_batches,
+    list_published_versions,
     list_versions,
     metric_map,
     official_versions_for,
@@ -42,10 +57,12 @@ def create_app(config: dict | None = None) -> Flask:
     data_dir = os.environ.get("DATA_DIR", os.path.join(app.instance_path, "data"))
     staging_dir = os.path.join(data_dir, "staging")
     published_dir = os.path.join(data_dir, "published")
+    recheck_dir = os.path.join(data_dir, "recheck")
     app.config.update(
         DATABASE_PATH=os.path.join(data_dir, "forestry.db"),
         STAGING_DIR=staging_dir,
         PUBLISHED_DIR=published_dir,
+        RECHECK_DIR=recheck_dir,
     )
     if config:
         app.config.update(config)
@@ -53,6 +70,7 @@ def create_app(config: dict | None = None) -> Flask:
     # 测试可能覆盖目录；按最终配置统一确保目录与库父目录存在
     os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
     os.makedirs(app.config["PUBLISHED_DIR"], exist_ok=True)
+    os.makedirs(app.config["RECHECK_DIR"], exist_ok=True)
     os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
 
     init_db(app)
@@ -377,4 +395,204 @@ def create_app(config: dict | None = None) -> Flask:
             },
         )
 
+    # ---------- 复测核对：换牌核对页 ----------
+    def _render_recheck_form(**context):
+        defaults = {
+            "versions": list_published_versions(),
+            "swap_headers": SWAP_HEADERS,
+            "prev_selected": None,
+            "curr_selected": None,
+            "issues": None,
+            "form_error": None,
+            "result": None,
+            "recheck_id": None,
+            "preview": None,
+            "preview_headers": RECHECK_COLUMNS,
+            "preview_n": PREVIEW_ROWS,
+        }
+        defaults.update(context)
+        return render_template("recheck.html", **defaults)
+
+    @app.route("/recheck")
+    def recheck_form():
+        return _render_recheck_form(
+            prev_selected=request.args.get("prev_version_id", type=int),
+            curr_selected=request.args.get("curr_version_id", type=int),
+        )
+
+    @app.route("/recheck/template")
+    def recheck_template():
+        def rows():
+            yield {SWAP_HEADERS[0]: "", SWAP_HEADERS[1]: ""}
+
+        return Response(
+            csv_chunks(rows(), fieldnames=list(SWAP_HEADERS)),
+            mimetype="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename=\"swap_template.csv\"; "
+                    "filename*=UTF-8''swap_template.csv"
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    def _resolve_recheck_versions(raw_prev: str, raw_curr: str):
+        """校验两个版本选择，返回 (前期版, 本期版)；非法抛 ValidationError。"""
+        try:
+            prev_id = int(raw_prev)
+            curr_id = int(raw_curr)
+        except (TypeError, ValueError):
+            raise ValidationError("请分别选择前期与本期的已发布版本。")
+        prev_version = get_published_version(prev_id)
+        curr_version = get_published_version(curr_id)
+        if prev_version is None or curr_version is None:
+            raise ValidationError("所选版本不是正式版（已发布版本），请重新选择。")
+        if prev_id == curr_id:
+            raise ValidationError("前期与本期必须选择两个不同的版本。")
+        return prev_version, curr_version
+
+    @app.route("/recheck", methods=["POST"])
+    def recheck_run():
+        try:
+            prev_version, curr_version = _resolve_recheck_versions(
+                request.form.get("prev_version_id", ""),
+                request.form.get("curr_version_id", ""),
+            )
+        except ValidationError as exc:
+            return _render_recheck_form(form_error=str(exc))
+
+        upload = request.files.get("swap_file")
+        if not upload or not upload.filename:
+            return _render_recheck_form(
+                form_error="请上传两列换牌 CSV；没有换牌记录也请上传仅含表头的模板。",
+                prev_selected=prev_version["id"],
+                curr_selected=curr_version["id"],
+            )
+        if not upload.filename.lower().endswith(".csv"):
+            return _render_recheck_form(
+                form_error="换牌表仅支持 .csv 文件。",
+                prev_selected=prev_version["id"],
+                curr_selected=curr_version["id"],
+            )
+
+        # 换牌文件先落盘（独立目录），核对与后续下载都只读这一份；
+        # 解析与装载在 run_recheck 内流式进行，内存不随换牌行数增长。
+        token = new_swap_token()
+        swap_path = os.path.join(app.config["RECHECK_DIR"], f"{token}.csv")
+        upload.save(swap_path)
+
+        conn = recheck_connection(app.config["DATABASE_PATH"])
+        try:
+            try:
+                result = run_recheck(conn, prev_version, curr_version, swap_path)
+            except RecheckFormError as exc:
+                _safe_remove(swap_path)
+                return _render_recheck_form(
+                    form_error=str(exc),
+                    prev_selected=prev_version["id"],
+                    curr_selected=curr_version["id"],
+                )
+            if not result.ok:
+                # 任一条出错：整份核对表都不发出，换牌文件也不保留
+                _safe_remove(swap_path)
+                return _render_recheck_form(
+                    prev_selected=prev_version["id"],
+                    curr_selected=curr_version["id"],
+                    issues=result.issues,
+                )
+
+            preview = preview_recheck_rows(
+                conn, prev_version, curr_version, PREVIEW_ROWS
+            )
+            db = get_db()
+            cur = db.execute(
+                """INSERT INTO recheck_files
+                       (prev_version_id, curr_version_id, swap_path, original_filename)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    prev_version["id"],
+                    curr_version["id"],
+                    swap_path,
+                    os.path.basename(upload.filename),
+                ),
+            )
+            db.commit()
+            recheck_id = cur.lastrowid
+        finally:
+            conn.close()
+
+        return _render_recheck_form(
+            prev_selected=prev_version["id"],
+            curr_selected=curr_version["id"],
+            result=result,
+            recheck_id=recheck_id,
+            preview=preview,
+        )
+
+    @app.route("/recheck/<int:recheck_id>/download")
+    def recheck_download(recheck_id: int):
+        # 只用核对时选定的版本重跑一遍：期间批次照常换交也不影响本份核对
+        row = get_db().execute(
+            "SELECT * FROM recheck_files WHERE id = ?", (recheck_id,)
+        ).fetchone()
+        if row is None:
+            abort(404)
+        # 选定版本在此后可能因批次换交而变成历史版：版本行与 Parquet 不可变，
+        # 下载始终按核对时冻结的这两个版本重算，不跟随正式版切换。
+        prev_version = get_version(row["prev_version_id"])
+        curr_version = get_version(row["curr_version_id"])
+        if prev_version is None or curr_version is None:
+            abort(404)
+
+        conn = recheck_connection(app.config["DATABASE_PATH"])
+        try:
+            try:
+                result = run_recheck(
+                    conn, prev_version, curr_version, row["swap_path"]
+                )
+            except RecheckFormError as exc:
+                # 换牌文件缺失/损坏：不发出任何核对表
+                abort(500, description=f"换牌文件无法读取，未发出核对表：{exc}")
+            if not result.ok:
+                # 数据不可变，重算仍失败说明文件已损坏；不发出任何核对表
+                details = "；".join(issue.label for issue in result.issues)
+                abort(500, description=f"核对表重算失败，未发出：{details}")
+
+            def generate():
+                try:
+                    yield from csv_chunks(
+                        iter_recheck_rows(conn, prev_version, curr_version),
+                        fieldnames=RECHECK_COLUMNS,
+                    )
+                finally:
+                    conn.close()
+        except Exception:
+            conn.close()
+            raise
+
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = (
+            f"recheck_{prev_version['batch_no']}_v{prev_version['version_no']}"
+            f"_vs_{curr_version['batch_no']}_v{curr_version['version_no']}_{stamp}.csv"
+        )
+        return Response(
+            generate(),
+            mimetype="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f"attachment; filename=\"{filename}\"; "
+                    f"filename*=UTF-8''{quote(filename)}"
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     return app
+
+
+def _safe_remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass

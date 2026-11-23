@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}复测核对（换牌）{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="inline" style="justify-content:space-between">
+    <h1 style="margin:0">复测核对 · 旧树牌换发核对</h1>
+    <a class="btn secondary" href="{{ url_for('index') }}">返回批次目录</a>
+  </div>
+  <p class="muted" style="margin-top:10px">
+    选同一样地<strong>前后两期已发布的批次版本</strong>，上传两列换牌 CSV
+    （列 <code>{{ swap_headers[0] }}</code> 填前期样木号、<code>{{ swap_headers[1] }}</code> 填本期样木号）：
+    一行至少填一侧，只填一侧表示该株只在那一期登记；填入的号在对应版本中须存在，
+    且在换牌表同一列只能用一次。先按换牌表核对，两侧都未被换牌表占用的同号记录才自动配对。
+  </p>
+  <div class="actions">
+    <a class="btn light" href="{{ url_for('recheck_template') }}">下载换牌 CSV 模板</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>① 选择版本并上传换牌表</h2>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('recheck_run') }}">
+    <label>前期版本（旧树牌期）*</label>
+    <select name="prev_version_id" required>
+      <option value="">— 请选择已发布版本 —</option>
+      {% for v in versions %}
+      <option value="{{ v.id }}" {{ 'selected' if prev_selected == v.id }}>
+        {{ v.time_point }} · 批次 {{ v.batch_no }} · v{{ v.version_no }}（正式版）
+      </option>
+      {% endfor %}
+    </select>
+
+    <label>本期版本（新树牌期）*</label>
+    <select name="curr_version_id" required>
+      <option value="">— 请选择已发布版本 —</option>
+      {% for v in versions %}
+      <option value="{{ v.id }}" {{ 'selected' if curr_selected == v.id }}>
+        {{ v.time_point }} · 批次 {{ v.batch_no }} · v{{ v.version_no }}（正式版）
+      </option>
+      {% endfor %}
+    </select>
+
+    <label>换牌 CSV（两列；无换牌记录时上传仅含表头的空模板即可）*</label>
+    <input type="file" name="swap_file" accept=".csv" required>
+
+    <div class="actions">
+      <button type="submit">开始核对</button>
+    </div>
+    <p class="muted" style="margin-top:10px">
+      核对与下载都只用这里选定的版本，期间批次照常换交不受影响；
+      任一期普查有空号、重号，或换牌记录不合规则时，整份核对表都不发出。
+    </p>
+  </form>
+</div>
+
+{% if form_error %}
+<div class="card">
+  <div class="flash error" style="margin-bottom:0">{{ form_error }}</div>
+</div>
+{% endif %}
+
+{% if issues %}
+<div class="card">
+  <h2>核对未通过（共 {{ issues|length }} 处问题，整份核对表未发出）</h2>
+  <table style="max-width:860px">
+    <thead><tr><th style="width:120px">出错来源</th><th style="width:110px">记录序号</th><th>原因</th></tr></thead>
+    <tbody>
+      {% for issue in issues %}
+      <tr>
+        <td>{{ issue.source }}</td>
+        <td>{{ issue.seq if issue.seq else '—' }}</td>
+        <td>{{ issue.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if result and result.ok %}
+<div class="card">
+  <h2>② 核对结果（共 {{ result.total_rows }} 株）</h2>
+  <p class="muted">
+    两期均登记 {{ result.both_count }} 株 ·
+    仅前期登记 {{ result.prev_only_count }} 株 ·
+    仅本期登记 {{ result.curr_only_count }} 株。
+    样木号沿用明细文本（保留前导零），树高已统一换算为米，缺项留空。
+  </p>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('recheck_download', recheck_id=recheck_id) }}">
+      下载核对表 CSV（流式，逐株列出前后批次号/版号/样木号/树高）
+    </a>
+  </div>
+
+  <h2 style="margin-top:20px">前 {{ preview_n }} 行预览</h2>
+  {% if preview %}
+  <div style="overflow-x:auto">
+    <table style="font-size:12px">
+      <thead>
+        <tr>{% for h in preview_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for row in preview %}
+        <tr>{% for h in preview_headers %}<td>{{ row[h] }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if preview|length < preview_n %}
+  <p class="muted">核对结果仅 {{ preview|length }} 行，已全部展示。</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">没有可输出的核对行。</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

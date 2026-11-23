@@ -255,6 +255,31 @@ def get_version(version_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def get_published_version(version_id: int) -> sqlite3.Row | None:
+    """取已发布（正式版）版本；历史版与不存在均返回 None。"""
+    return get_db().execute(
+        """
+        SELECT v.*, b.batch_no, b.time_point, b.id AS batch_id
+          FROM versions v JOIN batches b ON b.id = v.batch_id
+         WHERE v.id = ? AND v.is_official = 1
+        """,
+        (version_id,),
+    ).fetchone()
+
+
+def list_published_versions() -> list[sqlite3.Row]:
+    """全部已发布版本，按时间倒序（晚的在前）供复测核对选择。"""
+    return get_db().execute(
+        """
+        SELECT v.id, v.version_no, v.is_official, v.parquet_path,
+               v.tree_id_column, v.batch_id, b.batch_no, b.time_point
+          FROM versions v JOIN batches b ON b.id = v.batch_id
+         WHERE v.is_official = 1
+         ORDER BY b.time_point DESC, b.batch_no, v.version_no DESC
+        """
+    ).fetchall()
+
+
 def metric_map(version_id: int) -> dict[str, tuple[str, str]]:
     rows = get_db().execute(
         "SELECT metric_key, source_column, unit FROM version_metrics WHERE version_id = ?",

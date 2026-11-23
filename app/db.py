@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS staged_files (
     columns      TEXT NOT NULL,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS recheck_files (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    prev_version_id     INTEGER NOT NULL REFERENCES versions(id),
+    curr_version_id     INTEGER NOT NULL REFERENCES versions(id),
+    swap_path           TEXT NOT NULL,
+    original_filename   TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -53,6 +62,18 @@ def _connect(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
+def recheck_connection(db_path: str | Path) -> sqlite3.Connection:
+    """复测核对专用连接：临时表与临时索引交由磁盘支撑。
+
+    PRAGMA temp_store=FILE 让核对期间的临时表不落内存堆，
+    处理记录的内存开销只与批大小有关，不随总行数增长。
+    连接关闭时临时表自动销毁。
+    """
+    conn = _connect(db_path)
+    conn.execute("PRAGMA temp_store = FILE")
     return conn
 
 

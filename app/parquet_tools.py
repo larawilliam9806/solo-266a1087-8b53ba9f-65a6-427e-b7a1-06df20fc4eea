@@ -113,12 +113,18 @@ def preview_rows(
     return rows
 
 
-def csv_chunks(rows: Iterable[dict[str, str]], include_bom: bool = True) -> Iterator[bytes]:
+def csv_chunks(
+    rows: Iterable[dict[str, str]],
+    include_bom: bool = True,
+    fieldnames: list[str] | None = None,
+) -> Iterator[bytes]:
     """把输出行流式编码为 CSV 块。带 UTF-8 BOM，Excel 直接打开不乱码。"""
+    if fieldnames is None:
+        fieldnames = OUTPUT_COLUMNS
     if include_bom:
         yield "\ufeff".encode("utf-8")
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=OUTPUT_COLUMNS)
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     writer.writeheader()
     yield buffer.getvalue().encode("utf-8")
     buffer.seek(0)
@@ -131,3 +137,41 @@ def csv_chunks(rows: Iterable[dict[str, str]], include_bom: bool = True) -> Iter
             buffer.truncate(0)
     if buffer.tell():
         yield buffer.getvalue().encode("utf-8")
+
+
+def iter_tree_id_height(
+    path: str,
+    tree_id_column: str,
+    height_source: tuple[str, str] | None,
+) -> Iterator[tuple[str, str]]:
+    """分批扫描一个版本，逐行产出 (样木号文本, 树高米文本)。
+
+    height_source 为 (树高源列, 单位)；该版未配置树高时树高一律为空串。
+    样木号沿用明细文本（str() 保留前导零文本），空号保留为空串交由校验拦截。
+    生成器按 RecordBatch 扫描，不整表载入。
+    """
+    wanted = [tree_id_column]
+    if height_source is not None and height_source[0] not in wanted:
+        wanted.append(height_source[0])
+
+    pf = pq.ParquetFile(path)
+    for batch in pf.iter_batches(batch_size=READ_BATCH_SIZE, columns=wanted):
+        columns = {
+            name: batch.column(name).to_pylist() for name in batch.schema.names
+        }
+        id_values = columns[tree_id_column]
+        if height_source is not None:
+            source_col, unit = height_source
+            height_values = columns[source_col]
+        else:
+            height_values = None
+        for i in range(batch.num_rows):
+            raw_id = id_values[i]
+            tree_id = "" if raw_id is None else str(raw_id)
+            if height_values is None:
+                height_text = ""
+            else:
+                height_text = format_height(
+                    convert_height(height_values[i], unit)
+                )
+            yield tree_id, height_text

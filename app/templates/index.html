@@ -3,7 +3,10 @@
 <div class="card">
   <div class="inline" style="justify-content:space-between">
     <h1 style="margin:0">批次目录</h1>
-    <a class="btn" href="{{ url_for('new_batch_form') }}">新建批次（上传 Parquet）</a>
+    <div>
+      <a class="btn secondary" href="{{ url_for('recheck_form') }}">复测核对（换牌）</a>
+      <a class="btn" href="{{ url_for('new_batch_form') }}">新建批次（上传 Parquet）</a>
+    </div>
   </div>
 </div>
 
