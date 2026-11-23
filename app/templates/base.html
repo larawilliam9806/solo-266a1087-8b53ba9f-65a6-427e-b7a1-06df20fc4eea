@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}林业样地并表{% endblock %}</title>
+  <style>
+    :root { --line:#d9dee5; --ink:#1f2933; --muted:#66788a; --brand:#1f6f43; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
+          color:var(--ink); background:#f4f6f8; }
+    header { background:var(--brand); color:#fff; padding:14px 24px; }
+    header a { color:#fff; text-decoration:none; font-weight:600; font-size:18px; }
+    main { max-width:1080px; margin:24px auto; padding:0 16px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:8px;
+            padding:20px; margin-bottom:20px; }
+    h1 { font-size:20px; margin:0 0 16px; }
+    h2 { font-size:16px; margin:0 0 12px; }
+    table { border-collapse:collapse; width:100%; font-size:13px; }
+    th, td { border:1px solid var(--line); padding:7px 9px; text-align:left; }
+    th { background:#eef2f5; }
+    .muted { color:var(--muted); font-size:12px; }
+    .flash { padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:13px; }
+    .flash.error { background:#fdecea; border:1px solid #f5c2c0; color:#8a1f1c; }
+    .flash:not(.error) { background:#e8f5ec; border:1px solid #b7dfc4; color:#1d5b35; }
+    label { display:block; font-size:13px; margin:10px 0 4px; }
+    input[type=text], select { width:100%; max-width:420px; padding:7px 9px;
+            border:1px solid var(--line); border-radius:5px; font-size:13px; }
+    .inline { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+    .inline label { margin:0; }
+    button, .btn { display:inline-block; background:var(--brand); color:#fff; border:0;
+            padding:8px 16px; border-radius:5px; font-size:13px; cursor:pointer;
+            text-decoration:none; margin-right:8px; }
+    .btn.secondary { background:#516373; }
+    .btn.light { background:#fff; color:var(--brand); border:1px solid var(--brand); }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; }
+    .pill.on { background:#e8f5ec; color:#1d5b35; }
+    .pill.off { background:#eef0f2; color:var(--muted); }
+    .actions { margin-top:16px; }
+    code { background:#eef2f5; padding:1px 5px; border-radius:3px; }
+  </style>
+</head>
+<body>
+<header><a href="{{ url_for('index') }}">🌲 林业样地普查并表系统</a></header>
+<main>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

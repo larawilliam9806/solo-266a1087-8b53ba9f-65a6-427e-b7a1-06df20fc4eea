@@ -1,0 +1,17 @@
+{% if rows %}
+<table>
+  <thead>
+    <tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>{% for h in headers %}<td>{{ row[h] }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if rows|length < preview_n %}
+<p class="muted">该版仅有 {{ rows|length }} 行，已全部展示。</p>
+{% endif %}
+{% else %}
+<p class="muted">该版本没有数据行。</p>
+{% endif %}

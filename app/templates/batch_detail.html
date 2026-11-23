@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}批次 {{ batch.batch_no }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>批次 {{ batch.batch_no }}</h1>
+  <p class="muted">
+    时点 <code>{{ batch.time_point }}</code> ·
+    备注 {{ batch.note or '—' }} ·
+    创建于 {{ batch.created_at }}
+  </p>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('replace_form', batch_id=batch.id) }}">换交新 Parquet</a>
+    <a class="btn secondary" href="{{ url_for('index') }}">返回批次目录</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>版号记录（旧版明细始终可下载）</h2>
+  <table>
+    <thead><tr><th>版号</th><th>状态</th><th>样木号列</th><th>生成时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for v in versions %}
+      <tr>
+        <td>v{{ v.version_no }}</td>
+        <td>
+          <span class="pill {{ 'on' if v.is_official else 'off' }}">
+            {{ '正式版' if v.is_official else '历史版' }}
+          </span>
+        </td>
+        <td><code>{{ v.tree_id_column }}</code></td>
+        <td>{{ v.created_at }}</td>
+        <td>
+          <a class="btn light" href="{{ url_for('version_detail', version_id=v.id) }}">预览</a>
+          <a class="btn light" href="{{ url_for('version_download', version_id=v.id) }}">全量 CSV</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

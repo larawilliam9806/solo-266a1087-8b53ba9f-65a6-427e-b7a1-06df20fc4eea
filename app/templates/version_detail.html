@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ version.batch_no }} v{{ version.version_no }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ version.batch_no }} · v{{ version.version_no }}
+    <span class="pill {{ 'on' if version.is_official else 'off' }}">
+      {{ '正式版' if version.is_official else '历史版' }}
+    </span>
+  </h1>
+  <p class="muted">时点 <code>{{ version.time_point }}</code> · 样木号列 <code>{{ version.tree_id_column }}</code></p>
+  <table style="max-width:760px">
+    <thead><tr><th>高度指标</th><th>源列</th><th>原始单位</th></tr></thead>
+    <tbody>
+      {% for key, label, _out in metrics %}
+      <tr>
+        <td>{{ label }}</td>
+        {% if key in mappings %}
+        <td><code>{{ mappings[key][0] }}</code></td>
+        <td>{{ '厘米 (cm)' if mappings[key][1] == 'cm' else '米 (m)' }}</td>
+        {% else %}
+        <td class="muted" colspan="2">未配置，输出留空</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('version_download', version_id=version.id) }}">下载该版全量明细 CSV（流式）</a>
+    <a class="btn secondary" href="{{ url_for('batch_detail', batch_id=version.batch_id) }}">返回批次</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>前 {{ preview_n }} 行预览（高度已统一为米，缺项留空）</h2>
+  {% include "_preview_table.html" %}
+</div>
+{% endblock %}

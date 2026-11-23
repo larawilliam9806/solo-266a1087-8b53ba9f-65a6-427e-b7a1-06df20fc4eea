@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}
+  {{ '换交 Parquet' if mode == 'replace' else '新建批次' }}
+{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ '换交 Parquet（批次 ' + batch.batch_no + '）' if mode == 'replace' else '新建批次' }}</h1>
+
+  <h2>① 上传 / 更换 Parquet 文件</h2>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('upload') }}">
+    {% if mode == 'new' %}<input type="hidden" name="target" value="new">{% endif %}
+    {% if mode == 'replace' %}<input type="hidden" name="target" value="replace:{{ batch.id }}">{% endif %}
+    <div class="inline">
+      <input type="file" name="file" accept=".parquet" required>
+      <button type="submit">上传并解析列名</button>
+    </div>
+    <p class="muted" style="margin-top:8px">
+      同名的列可能是树高，也可能是枝下高——上传后在下面逐列指定，文件与列对照一并生效。
+      换交失败（列缺失、单位缺失等）不会影响当前正式版，沿用原版。
+    </p>
+  </form>
+</div>
+
+{% if stage %}
+<div class="card">
+  <h2>② 指定样木号列与高度指标选列</h2>
+  <p class="muted">识别到 {{ columns|length }} 列：
+     <code>{{ columns|join('</code> <code>')|safe }}</code></p>
+
+  <form method="post"
+        action="{{ url_for('replace_batch', batch_id=batch.id) if mode == 'replace'
+                          else url_for('create_batch') }}">
+    <input type="hidden" name="token" value="{{ stage.token }}">
+
+    {% if mode == 'new' %}
+    <label>批次号 *</label>
+    <input type="text" name="batch_no" required placeholder="如 P2024-017">
+    <label>时点 *（同一时点的批次才能并表）</label>
+    <input type="text" name="time_point" required placeholder="如 2024-09 或 2024Q3">
+    <label>备注</label>
+    <input type="text" name="note">
+    {% else %}
+    <p class="muted">时点沿用该批次既有记录：<code>{{ batch.time_point }}</code>，不可更改。</p>
+    {% endif %}
+
+    <label>样木号所在列 *</label>
+    <select name="tree_id_column" required>
+      <option value="">— 请选择 —</option>
+      {% for c in columns %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select>
+
+    <table style="margin-top:16px; max-width:720px">
+      <thead><tr><th>高度指标</th><th>文件中的来源列</th><th>单位</th></tr></thead>
+      <tbody>
+        {% for key, label, _out in metrics %}
+        <tr>
+          <td>{{ label }}</td>
+          <td>
+            <select name="metric_{{ key }}_col">
+              <option value="">（文件中无此指标 / 不选用）</option>
+              {% for c in columns %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+          </td>
+          <td>
+            <select name="metric_{{ key }}_unit">
+              <option value="m">米 (m)</option>
+              <option value="cm">厘米 (cm)</option>
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted" style="margin-top:10px">
+      厘米值将自动除以 100 统一为米；缺项留空；未配置的指标列同样留空。
+    </p>
+    <div class="actions">
+      <button type="submit">
+        {{ '提交换交（生成新版本）' if mode == 'replace' else '发布为正式版' }}
+      </button>
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">上传 Parquet 后在此配置列对照。</p>
+</div>
+{% endif %}
+{% endblock %}

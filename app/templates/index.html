@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="inline" style="justify-content:space-between">
+    <h1 style="margin:0">批次目录</h1>
+    <a class="btn" href="{{ url_for('new_batch_form') }}">新建批次（上传 Parquet）</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>勾选批次并表（仅限同一时点的正式版）</h2>
+  {% if batches %}
+  <form method="post" action="{{ url_for('merge_preview') }}">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:36px"></th>
+          <th>批次号</th><th>时点</th><th>版本数</th>
+          <th>当前正式版</th><th>备注</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in batches %}
+        <tr>
+          <td><input type="checkbox" name="batch_ids" value="{{ b.id }}"
+                     {{ 'disabled' if not b.official_count }}></td>
+          <td>{{ b.batch_no }}</td>
+          <td>{{ b.time_point }}</td>
+          <td>{{ b.version_count }}</td>
+          <td>
+            {% if b.official_version_no %}
+              <span class="pill on">v{{ b.official_version_no }}</span>
+            {% else %}
+              <span class="pill off">无正式版</span>
+            {% endif %}
+          </td>
+          <td>{{ b.note or '—' }}</td>
+          <td><a class="btn light" href="{{ url_for('batch_detail', batch_id=b.id) }}">详情/换交</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="actions">
+      <button type="submit">预览（各取前 20 行）</button>
+      <button type="submit" formaction="{{ url_for('merge_stream') }}" formmethod="get"
+              formnovalidate>下载全量 CSV（流式）</button>
+    </div>
+    <p class="muted" style="margin-top:10px">
+      下载按钮以 GET 方式提交勾选值，服务端逐批流式生成，内存开销不随总行数增长。
+    </p>
+  </form>
+  {% else %}
+  <p class="muted">还没有批次，先点右上角新建批次并上传 Parquet。</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}并表预览 · 时点 {{ time_point }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>并表预览 · 时点 <code>{{ time_point }}</code></h1>
+  <p class="muted">
+    共 {{ previews|length }} 个批次，各取当前正式版前 {{ preview_n }} 行；
+    全量下载保留所有样木行，每行带批次号与版号，高度统一为米、缺项留空。
+  </p>
+  <form method="get" action="{{ url_for('merge_stream') }}">
+    {% for bid in batch_ids %}<input type="hidden" name="batch_ids" value="{{ bid }}">{% endfor %}
+    <button type="submit">下载全量并表 CSV（流式，内存不随总行数增长）</button>
+    <a class="btn secondary" href="{{ url_for('index') }}">返回重选</a>
+  </form>
+</div>
+
+{% for item in previews %}
+<div class="card">
+  <h2>{{ item.version.batch_no }} · v{{ item.version.version_no }}（正式版）</h2>
+  {% set rows = item.rows %}
+  {% include "_preview_table.html" %}
+</div>
+{% endfor %}
+{% endblock %}

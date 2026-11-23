@@ -1,0 +1,104 @@
+# 林业样地普查并表系统
+
+合并历年样地普查 Parquet：同名列在不同年份可能表示**树高**，也可能表示**枝下高**，
+本系统在上传/换交时逐文件指定列对照与单位，把高度统一换算成米后并表导出 CSV。
+
+## 功能对照
+
+| 需求 | 实现 |
+| --- | --- |
+| 批次目录存 SQLite | `data/forestry.db`（WAL 模式），批次、版号、列对照、暂存记录全部入库 |
+| docker compose 启动 | `docker compose up --build`，数据在命名卷 `forestry_data` 持久化 |
+| 上传/换交时指定样木号列 | 表单必选 `tree_id_column`，校验列存在 |
+| 为文件里有的高度指标选列 | 树高、枝下高两个指标各自可选源列，不选则输出留空 |
+| 注明米/厘米 | 每个指标单独选 `m`/`cm`；厘米自动 ÷100 统一为米 |
+| 文件和列对照一并生效 | 单事务内先原子落盘再写库，全部成功才产生新版本 |
+| 换交失败沿用原版 | 校验失败或事务回滚，旧正式版行与旧 Parquet 均不动 |
+| 勾选批次、同时点预览 | 强制所有勾选批次时点相同，各取正式版**前 20 行** |
+| 下载全量 CSV | Flask 流式响应（生成器），逐批扫描、分块输出 |
+| 高度统一成米、缺项留空 | `None`/`NaN` 输出空字符串，不做填充或删除 |
+| 保留所有样木行 | 不做任何行过滤，Parquet 有多少行输出多少行 |
+| 每行带批次号和版号 | 固定输出列 `batch_no, version_no, tree_id, tree_height_m, under_branch_height_m` |
+| 旧预览/旧明细可下载 | 每个版号独立 Parquet 与独立下载入口，永不覆盖 |
+| 预览无需读完整批 | `iter_batches` 读到第 20 行即 `break` |
+| 下载内存不随总行数增长 | 批大小 1 万行的 Arrow RecordBatch 流式处理（实测见下） |
+
+## 快速开始（Docker）
+
+```bash
+SECRET_KEY=$(openssl rand -hex 32) docker compose up --build -d
+# 打开 http://localhost:5000
+```
+
+数据（SQLite、暂存文件、各版 Parquet）都在卷 `forestry_data`（容器内 `/data`）。
+停止并保留数据：`docker compose stop`；连数据一起清除：`docker compose down -v`。
+
+## 本地开发
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python wsgi.py                      # 开发服务器，:5000
+# 或生产方式
+gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 4 wsgi:app
+```
+
+## 操作流程
+
+1. **新建批次**：上传 Parquet → 系统解析列名 → 选样木号列、为树高/枝下高选源列并标单位
+   → 填批次号与时点 → 发布为 v1 正式版。
+2. **换交**：批次详情页 → 换交新 Parquet → 重新做列对照 → 提交。
+   成功后新版本成为正式版，旧版标记为历史版；任一步校验失败则正式版不变。
+3. **并表**：首页勾选同一时点的多个批次 →
+   - 「预览」：每个批次正式版前 20 行；
+   - 「下载全量 CSV（流式）」：所有批次全部样木行，带批次号/版号，高度统一为米。
+4. **回溯**：批次详情页可打开任意历史版的预览页与全量明细下载。
+
+## 生成演示数据
+
+```bash
+python3 -I scripts/make_sample_parquet.py /tmp/sample_data
+```
+
+三个文件刻意制造“同名列语义不同”：A 班 `height` 是树高（米），
+B 班同名列 `height` 是枝下高（厘米），换交版则换了一套列名与单位。
+
+## 内存特性实测
+
+独立进程、200 万行 Parquet（约 12 MB）全量流式导出：
+
+| 文件行数 | 进程峰值 RSS |
+| --- | --- |
+| 1,000 | 74 MB |
+| 100,000 | 87 MB |
+| 2,000,000 | 114 MB |
+
+行数增长 2000 倍，峰值内存仅增加约 40 MB（Arrow 固定缓冲池基线），
+不随总行数线性增长；200 万行文件取 20 行预览约 9~13 ms。
+
+## 目录结构
+
+```
+app/
+  constants.py        # 指标、输出列、批大小等领域常量
+  db.py               # SQLite 连接与建表（WAL）
+  parquet_tools.py    # Arrow 分批扫描、单位换算、CSV 流式编码
+  services.py         # 暂存/校验/发布事务/查询（业务逻辑）
+  routes.py           # Flask 工厂与全部路由
+  templates/          # 5 个服务端渲染页面
+scripts/              # 演示数据生成
+tests/                # pytest：端到端流程 + 纯函数单测（9 项）
+Dockerfile / docker-compose.yml
+wsgi.py               # gunicorn 入口
+```
+
+## 设计说明
+
+- **为什么不存合并结果**：各版 Parquet 不可变保存，并表是只读的流式查询，
+  任意勾选组合都能即时导出，也不会产生冗余副本。
+- **事务边界**：`publish_version` 在 `BEGIN IMMEDIATE` 事务内完成文件原子改名、
+  旧版降级、新版与列对照写入；异常回滚并清理新文件，保证“文件与列对照一并生效，
+  失败沿用原版”。
+- **并发**：SQLite WAL 允许流式下载（长读）与写入并行；发布用写锁串行化。
+- **输出口径**：CSV 带 UTF-8 BOM，Excel 直接打开不乱码；数值去掉无效尾零，
+  缺项为空单元格而非 0 或字符串 `null`。

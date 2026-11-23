@@ -1,0 +1,22 @@
+services:
+  forestry-merge:
+    build: .
+    image: forestry-merge:latest
+    container_name: forestry-merge
+    ports:
+      - "5000:5000"
+    environment:
+      # 生产部署请改成固定随机串
+      SECRET_KEY: ${SECRET_KEY:-please-change-me}
+      DATA_DIR: /data
+    volumes:
+      - forestry_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  forestry_data:
